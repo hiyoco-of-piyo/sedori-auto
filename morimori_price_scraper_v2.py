@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 """
 森森買取サイトから買取価格を抽出してGoogle Spreadsheetsに記録するスクリプト（改善版）
-
-このスクリプトは以下の方法で価格を抽出します:
-1. JANコードで検索
-2. 検索結果から商品ページリンクを抽出
-3. 商品ページから価格情報を抽出
 """
 
 import gspread
@@ -32,14 +27,7 @@ class MorimoriPriceScraperV2:
     """森森買取サイトの価格抽出クラス（改善版）"""
     
     def __init__(self, credentials_path, spreadsheet_url, sheet_name):
-        """
-        初期化
-        
-        Args:
-            credentials_path: Google APIの認証情報JSONファイルのパス
-            spreadsheet_url: スプレッドシートのURL
-            sheet_name: 対象シート名
-        """
+        """初期化"""
         self.spreadsheet_url = spreadsheet_url
         self.sheet_name = sheet_name
         self.base_url = "https://www.morimori-kaitori.jp"
@@ -60,16 +48,9 @@ class MorimoriPriceScraperV2:
         logging.info(f"スプレッドシート '{sheet_name}' に接続しました")
     
     def get_jan_codes(self):
-        """
-        B列からJANコードを取得
-        
-        Returns:
-            list: (行番号, JANコード)のタプルのリスト
-        """
-        # B列のデータを取得
+        """B列からJANコードを取得"""
         jan_codes_column = self.worksheet.col_values(2)
         
-        # ヘッダーをスキップして、空でないセルのみを取得
         jan_codes = []
         for i, jan_code in enumerate(jan_codes_column[1:], start=2):
             if jan_code and jan_code.strip():
@@ -79,22 +60,10 @@ class MorimoriPriceScraperV2:
         return jan_codes
     
     def make_request(self, url, retries=3):
-        """
-        HTTPリクエストを実行（リトライ付き）
-        
-        Args:
-            url: リクエストURL
-            retries: リトライ回数
-            
-        Returns:
-            BeautifulSoup: パース済みHTML（失敗時はNone）
-        """
+        """HTTPリクエストを実行（リトライ付き）"""
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         }
         
         for attempt in range(retries):
@@ -105,32 +74,21 @@ class MorimoriPriceScraperV2:
             except requests.RequestException as e:
                 logging.warning(f"リクエスト失敗 (試行 {attempt + 1}/{retries}): {e}")
                 if attempt < retries - 1:
-                    time.sleep(2 ** attempt)  # 指数バックオフ
+                    time.sleep(2 ** attempt)
                 else:
                     logging.error(f"リクエスト失敗: {url}")
                     return None
     
     def extract_price_from_text(self, text):
-        """
-        テキストから価格を抽出
-        
-        Args:
-            text: 価格を含む可能性のあるテキスト
-            
-        Returns:
-            str: 抽出された価格（見つからない場合はNone）
-        """
-        # パターン1: "12,345円" や "12345円"
+        """テキストから価格を抽出"""
         match = re.search(r'([\d,]+)\s*円', text)
         if match:
             return match.group(1).replace(',', '')
         
-        # パターン2: "¥12,345" や "¥12345"
         match = re.search(r'¥\s*([\d,]+)', text)
         if match:
             return match.group(1).replace(',', '')
         
-        # パターン3: 単純な数字（3桁以上）
         match = re.search(r'\b(\d{3,})\b', text)
         if match:
             return match.group(1)
@@ -138,18 +96,9 @@ class MorimoriPriceScraperV2:
         return None
     
     def find_product_links(self, soup):
-        """
-        検索結果ページから商品ページのリンクを抽出
-        
-        Args:
-            soup: BeautifulSoupオブジェクト
-            
-        Returns:
-            list: 商品ページURLのリスト
-        """
+        """検索結果ページから商品ページのリンクを抽出"""
         product_links = []
         
-        # パターン1: /product/ を含むリンク
         for link in soup.find_all('a', href=re.compile(r'/product/\d+')):
             href = link.get('href')
             if href:
@@ -157,71 +106,36 @@ class MorimoriPriceScraperV2:
                 if full_url not in product_links:
                     product_links.append(full_url)
         
-        # パターン2: データ属性に商品IDがある要素
-        for elem in soup.find_all(attrs={'data-product-id': True}):
-            product_id = elem.get('data-product-id')
-            if product_id:
-                full_url = f"{self.base_url}/product/{product_id}/"
-                if full_url not in product_links:
-                    product_links.append(full_url)
-        
         return product_links
     
     def extract_price_from_page(self, soup):
-        """
-        ページから価格を抽出（複数のパターンを試行）
-        
-        Args:
-            soup: BeautifulSoupオブジェクト
-            
-        Returns:
-            str: 抽出された価格（見つからない場合はNone）
-        """
-        # 試すセレクタのリスト（優先順位順）
+        """ページから価格を抽出（複数のパターンを試行）"""
         selectors = [
-            # クラス名ベース
             {'class_': re.compile(r'price', re.I)},
             {'class_': re.compile(r'amount', re.I)},
-            {'class_': re.compile(r'cost', re.I)},
-            {'class_': re.compile(r'buyback', re.I)},
             {'class_': re.compile(r'kaitori', re.I)},
-            # IDベース
             {'id': re.compile(r'price', re.I)},
-            {'id': re.compile(r'amount', re.I)},
         ]
         
         for selector in selectors:
-            elements = soup.find_all(['div', 'span', 'p', 'strong', 'b'], **selector)
+            elements = soup.find_all(['div', 'span', 'p', 'strong'], **selector)
             for elem in elements:
                 text = elem.get_text(strip=True)
                 price = self.extract_price_from_text(text)
-                if price and len(price) >= 3:  # 最低3桁の価格
-                    logging.debug(f"価格を発見: {price}円 (セレクタ: {selector})")
+                if price and len(price) >= 3:
                     return price
         
-        # 最後の手段: ページ全体から価格らしいテキストを探す
         all_text = soup.get_text()
-        # "買取価格" や "買取金額" の後の数字を探す
         match = re.search(r'買取(?:価格|金額)[:\s]*([¥\d,]+)', all_text)
         if match:
             price = self.extract_price_from_text(match.group(1))
             if price:
-                logging.debug(f"価格を発見（テキスト検索）: {price}円")
                 return price
         
         return None
     
     def scrape_price(self, jan_code):
-        """
-        指定したJANコードの買取価格をスクレイピング
-        
-        Args:
-            jan_code: JANコード
-            
-        Returns:
-            dict: {'price': 買取価格, 'url': 商品URL, 'update_time': 更新日時}
-                  取得失敗時は None
-        """
+        """指定したJANコードの買取価格をスクレイピング"""
         search_url = f"{self.search_url}?sk={jan_code}"
         logging.info(f"検索URL: {search_url}")
         
@@ -263,31 +177,21 @@ class MorimoriPriceScraperV2:
         return None
     
     def update_spreadsheet(self, row, price, update_time, url):
-        """
-        スプレッドシートを更新
-        
-        Args:
-            row: 行番号
-            price: 買取価格
-            update_time: 更新日時
-            url: 商品URL
-        """
+        """スプレッドシートを更新"""
         try:
             # バッチ更新で効率化
             cell_list = [
-                gspread.Cell(row, 3, price),        # C列
-                gspread.Cell(row, 4, update_time),  # D列
-                gspread.Cell(row, 5, url)           # E列
+                gspread.Cell(row, 3, price),
+                gspread.Cell(row, 4, update_time),
+                gspread.Cell(row, 5, url)
             ]
             self.worksheet.update_cells(cell_list)
-            logging.info(f"行 {row} を更新: 価格={price}, URL={url[:50]}...")
+            logging.info(f"行 {row} を更新: 価格={price}")
         except Exception as e:
             logging.error(f"行 {row} の更新エラー: {e}")
     
     def run(self):
-        """
-        メイン処理を実行
-        """
+        """メイン処理を実行"""
         logging.info("=" * 70)
         logging.info("価格抽出処理を開始")
         logging.info("=" * 70)
@@ -333,7 +237,7 @@ class MorimoriPriceScraperV2:
 
 def main():
     """メイン関数"""
-    CREDENTIALS_PATH = "credentials.json"
+    CREDENTIALS_PATH = "morimori-bot-475909-f42c08f4758f.json"
     SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1XHe4CrHACGnUeJx8nEm-JtI2M-G92FhbrU1H5YYUgBY/edit?gid=830970368#gid=830970368"
     SHEET_NAME = "森森買取"
     
